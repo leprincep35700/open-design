@@ -47,7 +47,10 @@ describe('buildSrcdoc', () => {
     });
 
     expect(srcdoc).toContain('data-od-selection-bridge');
-    expect(srcdoc).toContain('var commentEnabled = false;');
+    // The bridge boots with the requested mode already on so a click
+    // immediately after srcdoc rebuild is not lost to the listener-install
+    // race against the host's `od:*-mode` postMessage.
+    expect(srcdoc).toContain('var commentEnabled = true;');
     expect(srcdoc).toContain('var inspectEnabled = false;');
     expect(srcdoc).toContain("type: 'od:comment-target'");
     expect(srcdoc).toContain("type: 'od:comment-hover'");
@@ -63,6 +66,8 @@ describe('buildSrcdoc', () => {
     });
 
     expect(srcdoc).toContain('data-od-selection-bridge');
+    expect(srcdoc).toContain('var commentEnabled = false;');
+    expect(srcdoc).toContain('var inspectEnabled = true;');
     expect(srcdoc).toContain("type: 'od:inspect-overrides'");
     expect(srcdoc).toContain("data.type === 'od:inspect-mode'");
     expect(srcdoc).toContain("data.type === 'od:inspect-set'");
@@ -70,6 +75,31 @@ describe('buildSrcdoc', () => {
     expect(srcdoc).toContain("data.type === 'od:inspect-extract'");
     expect(srcdoc).toContain("data-od-inspect-overrides");
     expect(srcdoc).toContain('html[data-od-inspect-mode]');
+  });
+
+  it('hydrates inspect overrides from a persisted style block on bridge boot', () => {
+    // Without hydration, the first od:inspect-set rebuilds the override
+    // sheet from an empty in-memory map and silently drops every previously
+    // saved rule for other elements — Save-to-source would then erase them
+    // from the artifact too.
+    const srcdoc = buildSrcdoc('<main data-od-id="hero">Hero</main>', {
+      inspectBridge: true,
+    });
+    expect(srcdoc).toContain('function hydrateOverridesFromDom()');
+    expect(srcdoc).toContain('hydrateOverridesFromDom();');
+    expect(srcdoc).toContain("document.querySelector('style[data-od-inspect-overrides]')");
+  });
+
+  it('reflects the requested initial bridge modes on the documentElement attributes', () => {
+    const commentDoc = buildSrcdoc('<main data-od-id="hero">Hero</main>', {
+      commentBridge: true,
+    });
+    expect(commentDoc).toContain("document.documentElement.toggleAttribute('data-od-comment-mode', true)");
+
+    const inspectDoc = buildSrcdoc('<main data-od-id="hero">Hero</main>', {
+      inspectBridge: true,
+    });
+    expect(inspectDoc).toContain("document.documentElement.toggleAttribute('data-od-inspect-mode', true)");
   });
 
   it('omits the selection bridge entirely when neither comment nor inspect mode is on', () => {

@@ -42,9 +42,16 @@ export function buildSrcdoc(
   // Comment + Inspect share an element-selection bridge: both pick a
   // [data-od-id] / [data-screen-label] node and route the host's reply
   // to either the comment popover (annotate) or the inspect panel
-  // (live-style overrides). Inject once when either mode is on.
+  // (live-style overrides). Inject once when either mode is on. Pass the
+  // requested modes through so the bridge boots with picking already
+  // active — without that initial seed there is a window after each
+  // srcdoc rebuild where the host's `od:*-mode` postMessage races the
+  // bridge's own listener install and the iframe ignores clicks.
   return options.commentBridge || options.inspectBridge
-    ? injectSelectionBridge(withDeck)
+    ? injectSelectionBridge(withDeck, {
+        initialCommentMode: !!options.commentBridge,
+        initialInspectMode: !!options.inspectBridge,
+      })
     : withDeck;
 }
 
@@ -134,10 +141,15 @@ function injectSandboxShim(doc: string): string {
 // trusts any parent that can postMessage to it and relies on iframe
 // sandboxing + the prop allow-list / value sanitization below to contain
 // damage. Any parent able to postMessage here can already mount the iframe.
-function injectSelectionBridge(doc: string): string {
+function injectSelectionBridge(
+  doc: string,
+  options: { initialCommentMode?: boolean; initialInspectMode?: boolean } = {},
+): string {
+  const initialComment = options.initialCommentMode ? 'true' : 'false';
+  const initialInspect = options.initialInspectMode ? 'true' : 'false';
   const script = `<script data-od-selection-bridge>(function(){
-  var commentEnabled = false;
-  var inspectEnabled = false;
+  var commentEnabled = ${initialComment};
+  var inspectEnabled = ${initialInspect};
   var hoveredId = null;
   // overrides[elementId] = { selector: '[data-od-id="x"]', props: { color: '#fff', ... } }
   var overrides = Object.create(null);
@@ -189,6 +201,43 @@ function injectSelectionBridge(doc: string): string {
       (document.head || document.documentElement).appendChild(styleEl);
     }
     return styleEl;
+  }
+  // Hydrate the in-memory override map from any persisted
+  // <style data-od-inspect-overrides> block already in the document.
+  // Without this, the first od:inspect-set rebuilds the sheet from an
+  // empty map and silently drops every previously saved rule for other
+  // elements — a subsequent Save-to-source would then erase them from
+  // the artifact too.
+  function hydrateOverridesFromDom(){
+    var existing = document.querySelector('style[data-od-inspect-overrides]');
+    if (!existing) return;
+    var text = existing.textContent || '';
+    var ruleRe = /(\\[data-(?:od-id|screen-label)="[^"]*"\\])\\s*\\{\\s*([^}]*)\\}/g;
+    var match;
+    while ((match = ruleRe.exec(text)) !== null) {
+      var selector = match[1];
+      var declBody = match[2];
+      var idMatch = selector.match(/="([^"]*)"/);
+      if (!idMatch) continue;
+      var elementId = idMatch[1];
+      var props = Object.create(null);
+      var decls = declBody.split(';');
+      for (var d = 0; d < decls.length; d++) {
+        var raw = decls[d];
+        if (!raw) continue;
+        var colon = raw.indexOf(':');
+        if (colon <= 0) continue;
+        var name = raw.slice(0, colon).trim().toLowerCase();
+        if (!Object.prototype.hasOwnProperty.call(ALLOWED_PROPS, name)) continue;
+        var value = raw.slice(colon + 1).replace(/!important/i, '').trim();
+        if (!value || UNSAFE_VALUE.test(value)) continue;
+        props[name] = value;
+      }
+      if (Object.keys(props).length) {
+        overrides[elementId] = { selector: selector, props: props };
+      }
+    }
+    styleEl = existing;
   }
   function rebuildStyleSheet(){
     var el = ensureStyleEl();
@@ -377,6 +426,11 @@ function injectSelectionBridge(doc: string): string {
   }, true);
   window.addEventListener('resize', schedulePostTargets);
   document.addEventListener('scroll', schedulePostTargets, true);
+  // Reflect the host-requested initial modes on the documentElement so
+  // the cursor/hover styles match what the bridge picks up on click.
+  if (commentEnabled) document.documentElement.toggleAttribute('data-od-comment-mode', true);
+  if (inspectEnabled) document.documentElement.toggleAttribute('data-od-inspect-mode', true);
+  hydrateOverridesFromDom();
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', postTargets);
   else setTimeout(postTargets, 0);
 })();</script>`;

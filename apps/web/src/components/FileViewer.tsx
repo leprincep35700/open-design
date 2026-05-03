@@ -322,8 +322,12 @@ function InspectPanel({
   const initialFontSize = pxToNumber(target.style.fontSize);
   const initialRadius = pxToNumber(target.style.borderRadius);
 
-  const colorHex = rgbToHex(target.style.color);
-  const bgHex = rgbToHex(target.style.backgroundColor);
+  // Color / length controls all read through `draft` first so the input
+  // tracks the most recent user pick even before getComputedStyle catches
+  // up. Without this the picker would snap back to the initial computed
+  // snapshot on every change and feel non-editable.
+  const colorHex = value('color', rgbToHex(target.style.color));
+  const bgHex = value('background-color', rgbToHex(target.style.backgroundColor));
   const padding = value('padding', String(initialPadding));
   const fontSize = value('font-size', String(initialFontSize));
   const radius = value('border-radius', String(initialRadius));
@@ -391,10 +395,10 @@ function InspectPanel({
             min={8}
             max={160}
             step={1}
-            value={clamp(Number(fontSize) || initialFontSize, 8, 160)}
+            value={clamp(pxToNumber(fontSize) || initialFontSize, 8, 160)}
             onChange={(e) => setVal('font-size', `${e.target.value}px`)}
           />
-          <span className="inspect-row-value">{Math.round(Number(fontSize) || initialFontSize)}px</span>
+          <span className="inspect-row-value">{Math.round(pxToNumber(fontSize) || initialFontSize)}px</span>
         </div>
         <div className="inspect-row">
           <label htmlFor="ip-fw">Weight</label>
@@ -433,10 +437,10 @@ function InspectPanel({
             min={0}
             max={120}
             step={1}
-            value={clamp(Number(padding) || initialPadding, 0, 120)}
+            value={clamp(pxToNumber(padding) || initialPadding, 0, 120)}
             onChange={(e) => setVal('padding', `${e.target.value}px`)}
           />
-          <span className="inspect-row-value">{Math.round(Number(padding) || initialPadding)}px</span>
+          <span className="inspect-row-value">{Math.round(pxToNumber(padding) || initialPadding)}px</span>
         </div>
         <div className="inspect-row">
           <label htmlFor="ip-rad">Radius</label>
@@ -447,10 +451,10 @@ function InspectPanel({
             min={0}
             max={120}
             step={1}
-            value={clamp(Number(radius) || initialRadius, 0, 120)}
+            value={clamp(pxToNumber(radius) || initialRadius, 0, 120)}
             onChange={(e) => setVal('border-radius', `${e.target.value}px`)}
           />
-          <span className="inspect-row-value">{Math.round(Number(radius) || initialRadius)}px</span>
+          <span className="inspect-row-value">{Math.round(pxToNumber(radius) || initialRadius)}px</span>
         </div>
       </section>
 
