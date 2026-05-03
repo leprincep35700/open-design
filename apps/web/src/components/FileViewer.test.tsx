@@ -5,8 +5,11 @@ import {
   FileViewer,
   SvgViewer,
   applyInspectOverridesToSource,
+  parseInspectOverridesFromSource,
   serializeInspectOverrides,
+  updateInspectOverride,
 } from './FileViewer';
+import type { InspectOverrideMap } from './FileViewer';
 import type { ProjectFile } from '../types';
 
 function baseFile(overrides: Partial<ProjectFile>): ProjectFile {
@@ -274,5 +277,121 @@ describe('serializeInspectOverrides', () => {
     expect(serializeInspectOverrides(undefined)).toBe('');
     expect(serializeInspectOverrides('</style><script>alert(1)</script>')).toBe('');
     expect(serializeInspectOverrides(42)).toBe('');
+  });
+});
+
+// Regression for nexu-io/open-design#362: the host owns the inspect override
+// map authoritatively. Hydration parses the artifact source on load so an
+// initial Save-to-source preserves prior rules even when the user edits a
+// different element, and forging the iframe's od:inspect-overrides reply
+// cannot inject overrides — the host never ingests it.
+describe('parseInspectOverridesFromSource', () => {
+  it('returns an empty map when the source has no override block', () => {
+    expect(parseInspectOverridesFromSource('')).toEqual({});
+    expect(parseInspectOverridesFromSource('<!doctype html><html><body>x</body></html>')).toEqual({});
+  });
+
+  it('parses an existing override block into the host map', () => {
+    const source =
+      `<!doctype html><html><head>` +
+      `<style data-od-inspect-overrides>` +
+      `[data-od-id="hero"] { color: #ff0000 !important; font-size: 18px !important }` +
+      `\n[data-screen-label="01 Cover"] { background-color: #000 !important }` +
+      `</style></head><body></body></html>`;
+    const map = parseInspectOverridesFromSource(source);
+    expect(map.hero?.props).toEqual({ color: '#ff0000', 'font-size': '18px' });
+    expect(map.hero?.selector).toBe('[data-od-id="hero"]');
+    expect(map['01 Cover']?.props).toEqual({ 'background-color': '#000' });
+    expect(map['01 Cover']?.selector).toBe('[data-screen-label="01 Cover"]');
+  });
+
+  it('aggregates rules across multiple persisted blocks', () => {
+    const source =
+      `<style data-od-inspect-overrides>[data-od-id="a"] { color: #111 !important }</style>` +
+      `<style data-od-inspect-overrides>[data-od-id="b"] { color: #222 !important }</style>`;
+    const map = parseInspectOverridesFromSource(source);
+    expect(Object.keys(map).sort()).toEqual(['a', 'b']);
+  });
+
+  it('drops disallowed properties and rules whose only declarations are unsafe', () => {
+    const source =
+      `<style data-od-inspect-overrides>` +
+      `[data-od-id="hero"] { position: absolute !important; color: #fff !important }` +
+      `[data-od-id="bad"] { background: red } ` +
+      `</style>`;
+    const map = parseInspectOverridesFromSource(source);
+    expect(map.hero?.props).toEqual({ color: '#fff' });
+    expect(map.bad).toBeUndefined();
+  });
+
+  it('refuses elementIds whose characters could break out of the attr value', () => {
+    const hostile =
+      `<style data-od-inspect-overrides>` +
+      `[data-od-id="\"><script>alert(1)</script>"] { color: #fff !important }` +
+      `</style>`;
+    expect(parseInspectOverridesFromSource(hostile)).toEqual({});
+  });
+});
+
+describe('updateInspectOverride', () => {
+  const base: InspectOverrideMap = {
+    hero: { selector: '[data-od-id="hero"]', props: { color: '#ff0000' } },
+  };
+
+  it('adds a new property to an existing entry', () => {
+    const next = updateInspectOverride(base, 'hero', '[data-od-id="hero"]', 'font-size', '18px');
+    expect(next).not.toBe(base);
+    expect(next.hero?.props).toEqual({ color: '#ff0000', 'font-size': '18px' });
+  });
+
+  it('creates a new entry for a previously untouched element', () => {
+    const next = updateInspectOverride(base, 'cta', '[data-od-id="cta"]', 'color', '#00ff00');
+    expect(next.cta?.props).toEqual({ color: '#00ff00' });
+    expect(next.hero?.props).toEqual({ color: '#ff0000' });
+  });
+
+  it('clears a single property when given an empty value', () => {
+    const seeded = updateInspectOverride(base, 'hero', '[data-od-id="hero"]', 'font-size', '18px');
+    const cleared = updateInspectOverride(seeded, 'hero', '[data-od-id="hero"]', 'font-size', '');
+    expect(cleared.hero?.props).toEqual({ color: '#ff0000' });
+  });
+
+  it('drops the entry once the last property is cleared', () => {
+    const cleared = updateInspectOverride(base, 'hero', '[data-od-id="hero"]', 'color', '');
+    expect(cleared.hero).toBeUndefined();
+  });
+
+  it('returns the same map reference when the change is a no-op', () => {
+    const same = updateInspectOverride(base, 'hero', '[data-od-id="hero"]', 'color', '#ff0000');
+    expect(same).toBe(base);
+    const noClear = updateInspectOverride(base, 'hero', '[data-od-id="hero"]', 'font-size', '');
+    expect(noClear).toBe(base);
+  });
+
+  it('rejects properties off the host allow-list', () => {
+    const ignored = updateInspectOverride(base, 'hero', '[data-od-id="hero"]', 'position', 'absolute');
+    expect(ignored).toBe(base);
+  });
+
+  it('rejects values that could break out of `prop: value`', () => {
+    const ignored = updateInspectOverride(
+      base,
+      'hero',
+      '[data-od-id="hero"]',
+      'color',
+      'red; background: url(x)',
+    );
+    expect(ignored).toBe(base);
+  });
+
+  it('rejects elementIds whose characters could break out of the attr value', () => {
+    const ignored = updateInspectOverride(
+      base,
+      '"><script>alert(1)</script>',
+      '[data-od-id="x"]',
+      'color',
+      '#fff',
+    );
+    expect(ignored).toBe(base);
   });
 });

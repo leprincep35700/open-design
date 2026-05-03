@@ -453,11 +453,11 @@ function injectSelectionBridge(
   if (commentEnabled) document.documentElement.toggleAttribute('data-od-comment-mode', true);
   if (inspectEnabled) document.documentElement.toggleAttribute('data-od-inspect-mode', true);
   hydrateOverridesFromDom();
-  // Seed the host overrides state from the persisted style sheet so a
-  // Save-to-source before the user has touched any control does not splice
-  // an empty CSS body and erase the existing override block. Without this,
-  // hydrate updates the in-memory map but the host inspectOverridesCss
-  // stays empty until an od:inspect-set or od:inspect-reset is sent.
+  // Acknowledge the hydrated overrides to the host as a preview signal so
+  // diagnostic listeners (and tests) can observe that the bridge is in sync
+  // with the persisted style sheet. The host no longer treats this message
+  // as save input — it parses the artifact source itself — but emitting it
+  // keeps the iframe → host channel symmetric across set/reset/extract.
   if (Object.keys(overrides).length) setTimeout(postOverrides, 0);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', postTargets);
   else setTimeout(postTargets, 0);

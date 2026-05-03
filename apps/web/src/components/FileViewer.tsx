@@ -493,16 +493,29 @@ function InspectPanel({
   );
 }
 
-// Inspect-mode override map as it travels in od:inspect-overrides messages.
-// The bridge inside the iframe is the legitimate sender, but artifact code
-// rendered with scripts enabled can also call window.parent.postMessage with
-// a forged payload — ev.source still points at iframe.contentWindow. Treat
-// every field here as untrusted: the host re-derives the persisted CSS from
-// this structured map under its own allow-list, ignoring any sibling `css`.
+// Inspect-mode override entry as held in the host's authoritative map and as
+// it travels in od:inspect-overrides messages. The host's persisted map is
+// owned and mutated only by host-driven onApply / reset actions plus the
+// initial parse of the source's <style data-od-inspect-overrides> block;
+// inbound iframe messages are treated as preview acknowledgements, never as
+// save input. Artifact code rendered with scripts enabled can call
+// window.parent.postMessage with a forged payload — ev.source still points
+// at iframe.contentWindow — so any field arriving from the iframe is
+// untrusted. Even the structured `overrides` field could be tampered with
+// to flip allow-listed properties on elements the user never edited, which
+// is why we no longer ingest it on save.
 type InspectOverridePayload = {
   selector?: unknown;
   props?: unknown;
 };
+
+// Authoritative host-side override map: elementId → { selector, props }.
+// Mirrors the in-iframe shape so serializeInspectOverrides can consume it.
+export type InspectOverrideEntry = {
+  selector: string;
+  props: Record<string, string>;
+};
+export type InspectOverrideMap = Record<string, InspectOverrideEntry>;
 
 // Allow-list of CSS properties the host will persist on Save. Mirrors the
 // in-iframe ALLOWED_PROPS list so the host doesn't accept properties that
@@ -582,6 +595,87 @@ export function serializeInspectOverrides(overrides: unknown): string {
     lines.push(`${safeSelector} { ${decls.join('; ')} }`);
   }
   return lines.join('\n');
+}
+
+// Apply a single host-driven prop change to the authoritative override map.
+// Returns a new map (or the same reference if no-op so React skips renders).
+// Empty value clears the prop; clearing the last prop drops the elementId.
+// Mirrors the iframe bridge's applyOverride sanitization so the host map and
+// the live preview stay in lock-step under the same rules.
+export function updateInspectOverride(
+  map: InspectOverrideMap,
+  elementId: string,
+  selector: string,
+  prop: string,
+  value: string,
+): InspectOverrideMap {
+  if (!elementId || HOST_UNSAFE_INSPECT_ID.test(elementId)) return map;
+  const propName = String(prop || '').toLowerCase();
+  if (!HOST_ALLOWED_INSPECT_PROPS.has(propName)) return map;
+  const trimmed = String(value ?? '').trim();
+  if (trimmed && HOST_UNSAFE_INSPECT_VALUE.test(trimmed)) return map;
+  const existing = map[elementId];
+  const nextProps: Record<string, string> = { ...(existing?.props ?? {}) };
+  if (!trimmed) {
+    if (!(propName in nextProps)) return map;
+    delete nextProps[propName];
+  } else if (nextProps[propName] === trimmed && existing?.selector === selector) {
+    return map;
+  } else {
+    nextProps[propName] = trimmed;
+  }
+  const nextMap: InspectOverrideMap = { ...map };
+  if (Object.keys(nextProps).length === 0) {
+    delete nextMap[elementId];
+  } else {
+    nextMap[elementId] = { selector: selector || existing?.selector || '', props: nextProps };
+  }
+  return nextMap;
+}
+
+// Parse any persisted <style data-od-inspect-overrides> blocks in the
+// artifact source into the host's authoritative override map. The host owns
+// this map and only mutates it from onApply / reset actions plus this
+// initial hydration step — inbound iframe od:inspect-overrides messages are
+// not ingested. Without this step, opening a file that already carries an
+// override block would leave the host map empty, so a Save-to-source after
+// any subsequent edit could splice a CSS body that drops every previously
+// saved rule for elements the user did not touch in this session.
+//
+// Mirrors the iframe bridge's hydrateOverridesFromDom: same allow-list,
+// same value sanitizer, same selector kinds, so what the iframe applies and
+// what the host persists stay in lock-step. Pure string transform; no DOM.
+export function parseInspectOverridesFromSource(source: string): InspectOverrideMap {
+  const map: InspectOverrideMap = {};
+  if (!source) return map;
+  const blockRe = /<style[^>]*data-od-inspect-overrides[^>]*>([\s\S]*?)<\/style>/gi;
+  let blockMatch: RegExpExecArray | null;
+  while ((blockMatch = blockRe.exec(source)) !== null) {
+    const body = blockMatch[1] ?? '';
+    const ruleRe = /(\[data-(?:od-id|screen-label)="([^"]*)"\])\s*\{\s*([^}]*)\}/g;
+    let ruleMatch: RegExpExecArray | null;
+    while ((ruleMatch = ruleRe.exec(body)) !== null) {
+      const selector = ruleMatch[1] ?? '';
+      const elementId = ruleMatch[2] ?? '';
+      const declBody = ruleMatch[3] ?? '';
+      if (!selector || !elementId || HOST_UNSAFE_INSPECT_ID.test(elementId)) continue;
+      const props: Record<string, string> = {};
+      for (const raw of declBody.split(';')) {
+        if (!raw) continue;
+        const colon = raw.indexOf(':');
+        if (colon <= 0) continue;
+        const name = raw.slice(0, colon).trim().toLowerCase();
+        if (!HOST_ALLOWED_INSPECT_PROPS.has(name)) continue;
+        const value = raw.slice(colon + 1).replace(/!important/gi, '').trim();
+        if (!value || HOST_UNSAFE_INSPECT_VALUE.test(value)) continue;
+        props[name] = value;
+      }
+      if (Object.keys(props).length) {
+        map[elementId] = { selector, props };
+      }
+    }
+  }
+  return map;
 }
 
 // Splice (or remove) the inspect overrides <style> block in an HTML
@@ -1032,10 +1126,14 @@ function HtmlViewer({
   const [commentDraft, setCommentDraft] = useState('');
   // Inspect mode shares the iframe selection bridge with comment mode but
   // routes the picked element to a side panel that mutates per-element CSS
-  // overrides via postMessage. Save-to-source persists the cumulative
-  // override block back into the artifact HTML.
+  // overrides via postMessage. The host owns the authoritative override map:
+  // it is hydrated from the artifact's persisted <style> block on load and
+  // mutated only by host-driven onApply / reset actions. Save-to-source
+  // serializes that host map directly — iframe od:inspect-overrides messages
+  // are preview acknowledgements and never feed save input, so artifact JS
+  // forging a postMessage cannot tamper with what gets persisted.
   const [activeInspectTarget, setActiveInspectTarget] = useState<InspectTarget | null>(null);
-  const [inspectOverridesCss, setInspectOverridesCss] = useState('');
+  const [inspectOverrides, setInspectOverrides] = useState<InspectOverrideMap>({});
   const [savingInspect, setSavingInspect] = useState(false);
   const [inspectSavedAt, setInspectSavedAt] = useState<number | null>(null);
   const [inspectError, setInspectError] = useState<string | null>(null);
@@ -1157,7 +1255,7 @@ function HtmlViewer({
     setLiveCommentTargets(new Map());
     setCommentDraft('');
     setActiveInspectTarget(null);
-    setInspectOverridesCss('');
+    setInspectOverrides({});
     setInspectSavedAt(null);
     setInspectError(null);
   }, [file.name]);
@@ -1170,23 +1268,20 @@ function HtmlViewer({
     }
   }, [inspectMode]);
 
-  // Listen for the iframe's accumulated overrides snapshot — host needs the
-  // CSS body to splice into the source on Save. Artifact code rendered with
-  // scripts enabled shares the same iframe.contentWindow as the bridge, so
-  // ev.source alone does not establish trust: the host re-derives the CSS
-  // from the structured `overrides` map under its own allow-list and never
-  // persists the sibling `css` string supplied in the message.
+  // Hydrate the host-authoritative override map from the artifact source.
+  // The source's <style data-od-inspect-overrides> block is the only trusted
+  // input for prior overrides — iframe od:inspect-overrides messages are
+  // preview acknowledgements and are intentionally not ingested here. After
+  // hydration the map only mutates from host-driven onApply / reset callbacks
+  // below, so artifact JS forging an od:inspect-overrides message cannot
+  // tamper with what saveInspectToSource will persist.
   useEffect(() => {
-    if (!inspectMode) return;
-    function onMessage(ev: MessageEvent) {
-      if (ev.source !== iframeRef.current?.contentWindow) return;
-      const data = ev.data as { type?: string; overrides?: unknown } | null;
-      if (!data || data.type !== 'od:inspect-overrides') return;
-      setInspectOverridesCss(serializeInspectOverrides(data.overrides));
+    if (source == null) {
+      setInspectOverrides({});
+      return;
     }
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [inspectMode]);
+    setInspectOverrides(parseInspectOverridesFromSource(source));
+  }, [source]);
 
   useEffect(() => {
     if (!commentMode) {
@@ -1303,58 +1398,22 @@ function HtmlViewer({
     win.postMessage({ type: 'od:inspect-reset', elementId }, '*');
   }
 
-  // Pull the iframe's authoritative override CSS by sending od:inspect-extract
-  // and awaiting the next od:inspect-overrides reply. Used at save time so
-  // an artifact opened with persisted overrides — but never mutated in this
-  // session — does not splice an empty body that strips the saved block.
-  // Falls back to the cached `inspectOverridesCss` if the iframe never replies.
-  function extractInspectCss(timeoutMs = 750): Promise<string> {
-    return new Promise((resolve) => {
-      const win = iframeRef.current?.contentWindow;
-      if (!win) {
-        resolve(inspectOverridesCss);
-        return;
-      }
-      let settled = false;
-      function finish(value: string) {
-        if (settled) return;
-        settled = true;
-        window.removeEventListener('message', onMessage);
-        window.clearTimeout(timer);
-        resolve(value);
-      }
-      function onMessage(ev: MessageEvent) {
-        if (ev.source !== iframeRef.current?.contentWindow) return;
-        const data = ev.data as { type?: string; overrides?: unknown } | null;
-        if (!data || data.type !== 'od:inspect-overrides') return;
-        // Same defense as the persistent listener above: re-derive CSS from
-        // the structured map; never persist the inbound `css` string.
-        finish(serializeInspectOverrides(data.overrides));
-      }
-      window.addEventListener('message', onMessage);
-      const timer = window.setTimeout(() => finish(inspectOverridesCss), timeoutMs);
-      try {
-        win.postMessage({ type: 'od:inspect-extract' }, '*');
-      } catch {
-        finish(inspectOverridesCss);
-      }
-    });
-  }
-
   // Persist accumulated inspect overrides into the artifact source: replace
   // (or insert) a single <style data-od-inspect-overrides> block in <head>.
-  // The CSS body comes from the iframe — it's the same string the live
-  // sandbox is already applying, so reload-after-save shows identical
-  // rendering. POSTing to /api/projects/:id/files upserts the file via
+  // The CSS body is serialized from the host's own override map, hydrated
+  // from source on load and updated only by host-driven onApply / reset
+  // callbacks. We deliberately do NOT round-trip through the iframe at save
+  // time: artifact JS rendered inside the preview shares the same
+  // contentWindow as the bridge and could forge an od:inspect-overrides
+  // reply that flips allow-listed properties on elements the user never
+  // touched. POSTing to /api/projects/:id/files upserts the file via
   // writeProjectFile (multipart-or-JSON; we use JSON).
   async function saveInspectToSource() {
     if (!source) return;
     setSavingInspect(true);
     setInspectError(null);
     try {
-      const fresh = await extractInspectCss();
-      if (typeof fresh === 'string') setInspectOverridesCss(fresh);
-      const css = (fresh ?? inspectOverridesCss).trim();
+      const css = serializeInspectOverrides(inspectOverrides).trim();
       const next = applyInspectOverridesToSource(source, css);
       const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files`, {
         method: 'POST',
@@ -2039,10 +2098,20 @@ function HtmlViewer({
             {inspectMode && activeInspectTarget ? (
               <InspectPanel
                 target={activeInspectTarget}
-                onApply={(prop, value) =>
-                  postInspectSet(activeInspectTarget.elementId, activeInspectTarget.selector, prop, value)
-                }
+                onApply={(prop, value) => {
+                  const target = activeInspectTarget;
+                  setInspectOverrides((current) =>
+                    updateInspectOverride(current, target.elementId, target.selector, prop, value),
+                  );
+                  postInspectSet(target.elementId, target.selector, prop, value);
+                }}
                 onResetElement={(elementId) => {
+                  setInspectOverrides((current) => {
+                    if (!(elementId in current)) return current;
+                    const next = { ...current };
+                    delete next[elementId];
+                    return next;
+                  });
                   postInspectReset(elementId);
                   setActiveInspectTarget((current) => current && current.elementId === elementId
                     ? current
