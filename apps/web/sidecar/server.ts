@@ -32,6 +32,7 @@ if (process.env.OD_HOST != null && !/^[a-zA-Z0-9._\-:[\]@]+$/.test(process.env.O
   throw new Error(`OD_HOST contains invalid characters: ${process.env.OD_HOST}`);
 }
 const DAEMON_HOST = "127.0.0.1";
+const STANDALONE_BACKEND_HOST = "127.0.0.1";
 const DAEMON_PORT_ENV = SIDECAR_ENV.DAEMON_PORT;
 const WEB_DIST_DIR_ENV = SIDECAR_ENV.WEB_DIST_DIR;
 const WEB_PORT_ENV = SIDECAR_ENV.WEB_PORT;
@@ -134,6 +135,24 @@ if (Number.isInteger(parentPid) && parentPid > 0) {
 
 export function createStandaloneServerArgs(entryPath: string): string[] {
   return ["--import", createStandaloneParentMonitorImport(), entryPath];
+}
+
+export function resolveStandaloneBackendOrigin(port: number): string {
+  return `http://${STANDALONE_BACKEND_HOST}:${port}`;
+}
+
+export function createStandaloneBackendEnv(options: {
+  baseEnv?: NodeJS.ProcessEnv;
+  parentPid?: number;
+  port: number;
+}): NodeJS.ProcessEnv {
+  return {
+    ...(options.baseEnv ?? process.env),
+    HOSTNAME: STANDALONE_BACKEND_HOST,
+    NODE_ENV: "production",
+    PORT: String(options.port),
+    [STANDALONE_PARENT_PID_ENV]: String(options.parentPid ?? process.pid),
+  };
 }
 
 function resolveWebDistDir(webRoot: string): string {
@@ -292,10 +311,10 @@ async function prepareNextApp(app: { prepare(): Promise<void> }, dir: string): P
   await writeFile(nextEnvPath, previousNextEnv, "utf8").catch(() => undefined);
 }
 
-async function listen(server: HttpServer | TcpServer, port: number): Promise<number> {
+async function listen(server: HttpServer | TcpServer, port: number, host = HOST): Promise<number> {
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once("error", rejectListen);
-    server.listen({ host: HOST, port }, () => {
+    server.listen({ host, port }, () => {
       server.off("error", rejectListen);
       resolveListen();
     });
@@ -315,10 +334,10 @@ async function closeServer(server: HttpServer | TcpServer): Promise<void> {
   });
 }
 
-async function reserveTcpPort(): Promise<number> {
+async function reserveTcpPort(host = HOST): Promise<number> {
   const server = createTcpServer();
   try {
-    return await listen(server, 0);
+    return await listen(server, 0, host);
   } finally {
     await closeServer(server).catch(() => undefined);
   }
@@ -401,18 +420,12 @@ async function startStandaloneBackend(webRoot: string): Promise<StandaloneBacken
     throw new Error(`missing Next.js standalone server under ${resolveWebDistDir(webRoot)}; rebuild with ${WEB_OUTPUT_MODE_ENV}=standalone`);
   }
 
-  const port = await reserveTcpPort();
-  const origin = `http://${HOST}:${port}`;
+  const port = await reserveTcpPort(STANDALONE_BACKEND_HOST);
+  const origin = resolveStandaloneBackendOrigin(port);
   console.log(`[open-design web] starting standalone Next.js server from ${entryPath}`);
   const child = spawn(process.execPath, createStandaloneServerArgs(entryPath), {
     cwd: dirname(entryPath),
-    env: {
-      ...process.env,
-      HOSTNAME: HOST,
-      NODE_ENV: "production",
-      PORT: String(port),
-      [STANDALONE_PARENT_PID_ENV]: String(process.pid),
-    },
+    env: createStandaloneBackendEnv({ port }),
     stdio: ["ignore", "inherit", "inherit"],
     ...(process.platform === "win32" ? { windowsHide: true } : {}),
   });

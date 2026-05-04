@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  createStandaloneBackendEnv,
   createStandaloneParentMonitorImport,
   createStandaloneServerArgs,
   normalizeDaemonProxyOriginHeader,
   resolveDaemonProxyTarget,
+  resolveStandaloneBackendOrigin,
   resolveStandaloneServerEntry,
 } from '../sidecar/server';
 
@@ -104,6 +106,22 @@ describe('createStandaloneServerArgs', () => {
     expect(source).toContain('process.ppid === parentPid');
     expect(source).toContain('process.kill(parentPid, 0)');
     expect(source).toContain('process.exit(0)');
+  });
+});
+
+describe('standalone backend binding', () => {
+  it('keeps the hidden standalone backend on loopback even when the public sidecar host is wider', () => {
+    const env = createStandaloneBackendEnv({
+      baseEnv: { ...process.env, OD_HOST: '0.0.0.0' },
+      parentPid: 1234,
+      port: 5876,
+    });
+
+    expect(resolveStandaloneBackendOrigin(5876)).toBe('http://127.0.0.1:5876');
+    expect(env.HOSTNAME).toBe('127.0.0.1');
+    expect(env.PORT).toBe('5876');
+    expect(env.NODE_ENV).toBe('production');
+    expect(env.OD_STANDALONE_PARENT_PID).toBe('1234');
   });
 });
 

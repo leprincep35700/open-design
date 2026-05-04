@@ -454,16 +454,15 @@ jobs:
             echo "no enabled beta release assets were found" >&2
             exit 1
           fi
+          declare -A current_release_assets=()
+          for asset_path in "$all_release_dir"/*; do
+            current_release_assets["$(basename "$asset_path")"]=1
+          done
           if gh release view "${{ needs.metadata.outputs.version_tag }}" >/dev/null 2>&1; then
             gh release edit "${{ needs.metadata.outputs.version_tag }}" \
               --title "${{ needs.metadata.outputs.release_name }}" \
               --notes-file "${{ steps.notes.outputs.version_notes_file }}" \
               --prerelease
-            while IFS= read -r asset_name; do
-              if [ -n "$asset_name" ]; then
-                gh release delete-asset "${{ needs.metadata.outputs.version_tag }}" "$asset_name" --yes
-              fi
-            done < <(gh release view "${{ needs.metadata.outputs.version_tag }}" --json assets --jq '.assets[].name')
           else
             gh release create "${{ needs.metadata.outputs.version_tag }}" \
               --target "$GITHUB_SHA" \
@@ -472,6 +471,11 @@ jobs:
               --prerelease
           fi
           gh release upload "${{ needs.metadata.outputs.version_tag }}" "$all_release_dir"/* --clobber
+          while IFS= read -r asset_name; do
+            if [ -n "$asset_name" ] && [ -z "${current_release_assets[$asset_name]+x}" ]; then
+              gh release delete-asset "${{ needs.metadata.outputs.version_tag }}" "$asset_name" --yes
+            fi
+          done < <(gh release view "${{ needs.metadata.outputs.version_tag }}" --json assets --jq '.assets[].name')
 
       - name: Create or update beta channel feed
         run: |
@@ -493,27 +497,30 @@ jobs:
             fi
             feed_assets+=("$latest_win_path")
           fi
+          declare -A current_feed_assets=()
+          for feed_asset in "${feed_assets[@]}"; do
+            current_feed_assets["$(basename "$feed_asset")"]=1
+          done
           if gh release view "${{ needs.metadata.outputs.beta_tag }}" >/dev/null 2>&1; then
-            while IFS= read -r asset_name; do
-              if [ -n "$asset_name" ]; then
-                gh release delete-asset "${{ needs.metadata.outputs.beta_tag }}" "$asset_name" --yes
-              fi
-            done < <(gh release view "${{ needs.metadata.outputs.beta_tag }}" --json assets --jq '.assets[].name')
             gh release edit "${{ needs.metadata.outputs.beta_tag }}" \
               --title "Open Design Beta Latest" \
               --notes-file "${{ steps.notes.outputs.latest_notes_file }}" \
               --prerelease
-            if [ "${#feed_assets[@]}" -gt 0 ]; then
-              gh release upload "${{ needs.metadata.outputs.beta_tag }}" "${feed_assets[@]}" --clobber
-            fi
           else
             gh release create "${{ needs.metadata.outputs.beta_tag }}" \
-              "${feed_assets[@]}" \
               --target "$GITHUB_SHA" \
               --title "Open Design Beta Latest" \
               --notes-file "${{ steps.notes.outputs.latest_notes_file }}" \
               --prerelease
           fi
+          if [ "${#feed_assets[@]}" -gt 0 ]; then
+            gh release upload "${{ needs.metadata.outputs.beta_tag }}" "${feed_assets[@]}" --clobber
+          fi
+          while IFS= read -r asset_name; do
+            if [ -n "$asset_name" ] && [ -z "${current_feed_assets[$asset_name]+x}" ]; then
+              gh release delete-asset "${{ needs.metadata.outputs.beta_tag }}" "$asset_name" --yes
+            fi
+          done < <(gh release view "${{ needs.metadata.outputs.beta_tag }}" --json assets --jq '.assets[].name')
 
       - name: Publish summary
         run: |
