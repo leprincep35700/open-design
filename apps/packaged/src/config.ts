@@ -14,6 +14,7 @@ export const PACKAGED_WEB_OUTPUT_MODE_ENV = "OD_WEB_OUTPUT_MODE";
 export type PackagedWebOutputMode = "server" | "standalone";
 
 export type RawPackagedConfig = {
+  appVersion?: string;
   namespace?: string;
   namespaceBaseRoot?: string;
   nodeCommandRelative?: string;
@@ -23,6 +24,7 @@ export type RawPackagedConfig = {
 };
 
 export type PackagedConfig = {
+  appVersion: string | null;
   namespace: string;
   namespaceBaseRoot: string;
   nodeCommand: string | null;
@@ -66,6 +68,12 @@ async function readRawPackagedConfig(): Promise<RawPackagedConfig> {
 
 function resolveOptionalPath(value: string | undefined): string | undefined {
   return value == null || value.length === 0 ? undefined : resolve(value);
+}
+
+function cleanOptionalString(value: string | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
 }
 
 function resolvePackagedWebOutputMode(value: string | undefined): PackagedWebOutputMode {
@@ -116,6 +124,7 @@ export async function readPackagedConfig(): Promise<PackagedConfig> {
   );
 
   return {
+    appVersion: cleanOptionalString(raw.appVersion),
     namespace,
     namespaceBaseRoot,
     nodeCommand,

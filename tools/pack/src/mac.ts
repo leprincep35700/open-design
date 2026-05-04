@@ -154,7 +154,6 @@ const DESKTOP_LOG_ECHO_ENV = "OD_DESKTOP_LOG_ECHO";
 const WEB_STANDALONE_HOOK_CONFIG_ENV = "OD_TOOLS_PACK_WEB_STANDALONE_HOOK_CONFIG";
 const WEB_STANDALONE_RESOURCE_NAME = "open-design-web-standalone";
 const ELECTRON_BUILDER_ASAR = false;
-const ELECTRON_BUILDER_COMPRESSION = "store";
 const ELECTRON_BUILDER_FILE_PATTERNS = [
   "**/*",
   "!**/node_modules/.bin",
@@ -173,7 +172,7 @@ export type MacSizeReport = {
   appBytes: number;
   builder: {
     asar: boolean;
-    compression: string;
+    compression: ToolPackConfig["macCompression"];
     filePatterns: readonly string[];
     targets: ElectronBuilderTarget[];
     webOutputMode: ToolPackConfig["webOutputMode"];
@@ -503,6 +502,7 @@ async function writeAssembledApp(
     paths.packagedConfigPath,
     `${JSON.stringify(
       {
+        appVersion: packagedVersion,
         namespace: config.namespace,
         nodeCommandRelative: "open-design/bin/node",
         webOutputMode: config.webOutputMode,
@@ -548,7 +548,7 @@ async function runElectronBuilder(
     afterSign: config.signed ? macResources.notarizeHook : undefined,
     asar: ELECTRON_BUILDER_ASAR,
     buildDependenciesFromSource: false,
-    compression: ELECTRON_BUILDER_COMPRESSION,
+    compression: config.macCompression,
     directories: {
       output: paths.appBuilderOutputRoot,
     },
@@ -741,7 +741,7 @@ async function collectMacSizeReport(
     appBytes: await sizePathBytes(paths.appPath),
     builder: {
       asar: ELECTRON_BUILDER_ASAR,
-      compression: ELECTRON_BUILDER_COMPRESSION,
+      compression: config.macCompression,
       filePatterns: ELECTRON_BUILDER_FILE_PATTERNS,
       targets,
       webOutputMode: config.webOutputMode,

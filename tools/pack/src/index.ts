@@ -60,6 +60,11 @@ function addBuildOptions(command: CacCommand) {
     .option("--to <target>", "build target: all|app|dmg|zip (default: all)");
 }
 
+function addMacBuildOptions(command: CacCommand) {
+  return addBuildOptions(command)
+    .option("--mac-compression <mode>", "mac artifact compression: normal|maximum|store (default: normal)");
+}
+
 function addWinLifecycleOptions(command: CacCommand) {
   return command
     .option("--remove-data", "remove packaged data during uninstall/reset/cleanup")
@@ -71,7 +76,7 @@ function addWinLifecycleOptions(command: CacCommand) {
 
 const cli = cac("tools-pack");
 
-addBuildOptions(addSharedOptions(cli.command("mac <action>", "Mac packaging commands: build|install|start|stop|logs|uninstall|cleanup"))).action(
+addMacBuildOptions(addSharedOptions(cli.command("mac <action>", "Mac packaging commands: build|install|start|stop|logs|uninstall|cleanup"))).action(
   async (action: string, options: CliOptions) => {
     const config = resolveToolPackConfig("mac", options);
     switch (action) {

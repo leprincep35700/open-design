@@ -16,12 +16,14 @@ export const WORKSPACE_ROOT = resolve(__dirname, ENTRY_DIR_NAME === "dist" ? "..
 
 export type ToolPackPlatform = "mac" | "win";
 export type ToolPackBuildOutput = "all" | "app" | "dir" | "dmg" | "nsis" | "zip";
+export type ToolPackMacCompression = "store" | "normal" | "maximum";
 export type ToolPackWebOutputMode = "server" | "standalone";
 
 export type ToolPackCliOptions = {
   dir?: string;
   expr?: string;
   json?: boolean;
+  macCompression?: string;
   namespace?: string;
   path?: string;
   portable?: boolean;
@@ -52,6 +54,7 @@ export type ToolPackConfig = {
   electronBuilderCliPath: string;
   electronDistPath: string;
   electronVersion: string;
+  macCompression: ToolPackMacCompression;
   namespace: string;
   platform: ToolPackPlatform;
   portable: boolean;
@@ -72,6 +75,12 @@ function resolveToolPackBuildOutput(platform: ToolPackPlatform, value: string | 
   if (platform === "mac" && (value === "all" || value === "app" || value === "dmg" || value === "zip")) return value;
   if (platform === "win" && (value === "all" || value === "dir" || value === "nsis")) return value;
   throw new Error(`unsupported ${platform} --to target: ${value}`);
+}
+
+function resolveToolPackMacCompression(value: string | undefined): ToolPackMacCompression {
+  if (value == null || value.length === 0) return "normal";
+  if (value === "store" || value === "normal" || value === "maximum") return value;
+  throw new Error(`unsupported mac --mac-compression value: ${value}`);
 }
 
 function resolveToolPackWebOutputMode(platform: ToolPackPlatform, value: string | undefined): ToolPackWebOutputMode {
@@ -124,6 +133,7 @@ export function resolveToolPackConfig(
     electronBuilderCliPath: resolveElectronBuilderCliPath(),
     electronDistPath: resolveElectronDistPath(WORKSPACE_ROOT),
     electronVersion: resolveElectronVersion(WORKSPACE_ROOT),
+    macCompression: resolveToolPackMacCompression(options.macCompression),
     namespace,
     platform,
     portable: options.portable === true,

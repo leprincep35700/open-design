@@ -227,7 +227,12 @@ async function closeManagedChild(child: ManagedSidecarChild): Promise<void> {
 export async function startPackagedSidecars(
   runtime: SidecarRuntimeContext<SidecarStamp>,
   paths: PackagedNamespacePaths,
-  options: { nodeCommand: string | null; webStandaloneRoot: string | null; webOutputMode: PackagedWebOutputMode },
+  options: {
+    appVersion: string | null;
+    nodeCommand: string | null;
+    webStandaloneRoot: string | null;
+    webOutputMode: PackagedWebOutputMode;
+  },
 ): Promise<PackagedSidecarHandle> {
   await mkdir(paths.namespaceRoot, { recursive: true });
   await mkdir(paths.cacheRoot, { recursive: true });
@@ -251,6 +256,7 @@ export async function startPackagedSidecars(
         // fallback, but packaged runtime must not rely on path inference from
         // Electron userData, bundle names, or ports.
         ...createPackagedDaemonManagedPathEnv(paths),
+        ...(options.appVersion == null ? {} : { OD_APP_VERSION: options.appVersion }),
       },
       nodeCommand: options.nodeCommand,
       paths,
