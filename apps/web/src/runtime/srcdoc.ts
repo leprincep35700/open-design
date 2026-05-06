@@ -14,12 +14,20 @@
  *   { type: 'od:slide-state', active: number, count: number }
  * after every navigation so the host can render its own counter / dots.
  */
+import {
+  buildManualEditBridge,
+  buildManualEditBridgeStyle,
+  MANUAL_EDIT_DISCOVERY_SELECTOR,
+  MANUAL_EDIT_SOURCE_PATH_ATTR,
+} from '../edit-mode/bridge';
+
 export type SrcdocOptions = {
   deck?: boolean;
   baseHref?: string;
   initialSlideIndex?: number;
   commentBridge?: boolean;
   inspectBridge?: boolean;
+  editBridge?: boolean;
 };
 
 export function buildSrcdoc(
@@ -38,7 +46,8 @@ export function buildSrcdoc(
   </head>
   <body>${html}</body>
 </html>`;
-  const withBase = options.baseHref ? injectBaseHref(wrapped, options.baseHref) : wrapped;
+  const withSourcePaths = options.editBridge ? annotateManualEditSourcePaths(wrapped) : wrapped;
+  const withBase = options.baseHref ? injectBaseHref(withSourcePaths, options.baseHref) : withSourcePaths;
   const withShim = injectSandboxShim(withBase);
   const withDeck = options.deck ? injectDeckBridge(withShim, options.initialSlideIndex) : withShim;
   // Comment + Inspect share an element-selection bridge: both pick a
@@ -49,12 +58,61 @@ export function buildSrcdoc(
   // active — without that initial seed there is a window after each
   // srcdoc rebuild where the host's `od:*-mode` postMessage races the
   // bridge's own listener install and the iframe ignores clicks.
-  return options.commentBridge || options.inspectBridge
+  const withSelection = options.commentBridge || options.inspectBridge
     ? injectSelectionBridge(withDeck, {
         initialCommentMode: !!options.commentBridge,
         initialInspectMode: !!options.inspectBridge,
       })
     : withDeck;
+  return options.editBridge ? injectManualEditBridge(withSelection) : withSelection;
+}
+
+function annotateManualEditSourcePaths(doc: string): string {
+  if (typeof DOMParser === 'undefined') return doc;
+  try {
+    const parsed = new DOMParser().parseFromString(doc, 'text/html');
+    parsed.body.querySelectorAll(MANUAL_EDIT_DISCOVERY_SELECTOR).forEach((el) => {
+      if (el.hasAttribute('data-od-id')) return;
+      const path = sourcePathForElement(el);
+      if (path) el.setAttribute(MANUAL_EDIT_SOURCE_PATH_ATTR, path);
+    });
+    return serializeHtmlDocument(parsed);
+  } catch {
+    return doc;
+  }
+}
+
+function sourcePathForElement(el: Element): string {
+  const parts: number[] = [];
+  let node: Element | null = el;
+  while (node && node !== node.ownerDocument.body) {
+    const parent: Element | null = node.parentElement;
+    if (!parent) break;
+    parts.unshift(Array.prototype.indexOf.call(parent.children, node));
+    node = parent;
+  }
+  return parts.length ? `path-${parts.join('-')}` : '';
+}
+
+function serializeHtmlDocument(doc: Document): string {
+  const doctype = doc.doctype ? '<!doctype html>\n' : '';
+  return `${doctype}${doc.documentElement.outerHTML}`;
+}
+
+function injectManualEditBridge(doc: string): string {
+  const withStyle = injectBeforeHeadEnd(doc, buildManualEditBridgeStyle());
+  return injectBeforeBodyEnd(withStyle, buildManualEditBridge(true));
+}
+
+function injectBeforeHeadEnd(doc: string, payload: string): string {
+  if (/<\/head>/i.test(doc)) return doc.replace(/<\/head>/i, `${payload}</head>`);
+  if (/<head[^>]*>/i.test(doc)) return doc.replace(/<head[^>]*>/i, (m) => `${m}${payload}`);
+  return payload + doc;
+}
+
+function injectBeforeBodyEnd(doc: string, payload: string): string {
+  if (/<\/body>/i.test(doc)) return doc.replace(/<\/body>/i, `${payload}</body>`);
+  return doc + payload;
 }
 
 function injectBaseHref(doc: string, baseHref: string): string {
@@ -86,7 +144,7 @@ function escapeAttr(value: string): string {
 // in-memory shim BEFORE any user script runs so those decks degrade
 // gracefully (position just doesn't persist across reloads).
 function injectSandboxShim(doc: string): string {
-  const shim = `<script>(function(){
+  const shim = `<script data-od-sandbox-shim>(function(){
   function makeStore(){
     var data = {};
     var api = {
@@ -164,7 +222,17 @@ function injectSelectionBridge(
   const script = `<script data-od-selection-bridge>(function(){
   var commentEnabled = ${initialComment};
   var inspectEnabled = ${initialInspect};
+  // Comment mode has two sub-tools (kept on the host side as boardTool):
+  //   'picker' — click-to-select an element for annotation.
+  //   'pod'    — pointer-drag a freeform stroke that the host turns into a
+  //              pod selection covering whatever the stroke encloses.
+  // Inspect mode always uses 'picker'-style click selection regardless of
+  // this value.
+  var mode = 'picker';
   var hoveredId = null;
+  var drawing = false;
+  var stroke = [];
+  var postTargetsTimer = null;
   // overrides[elementId] = { selector: '[data-od-id="x"]', props: { color: '#fff', ... } }
   var overrides = Object.create(null);
   var styleEl = null;
@@ -352,10 +420,20 @@ function injectSelectionBridge(
   function schedulePostTargets(){
     if (!active() || postTargetsPending) return;
     postTargetsPending = true;
-    window.requestAnimationFrame(function(){
-      postTargetsPending = false;
-      postTargets();
-    });
+    if (postTargetsTimer) window.clearTimeout(postTargetsTimer);
+    postTargetsTimer = window.setTimeout(function(){
+      window.requestAnimationFrame(function(){
+        postTargetsPending = false;
+        postTargetsTimer = null;
+        postTargets();
+      });
+    }, 120);
+  }
+  function relativePoint(ev){
+    return { x: Math.round(ev.clientX), y: Math.round(ev.clientY) };
+  }
+  function postStroke(type){
+    window.parent.postMessage({ type: type, points: stroke.slice() }, '*');
   }
   function closestTarget(event){
     var el = event.target;
@@ -401,9 +479,16 @@ function injectSelectionBridge(
     if (!data || !data.type) return;
     if (data.type === 'od:comment-mode') {
       commentEnabled = !!data.enabled;
+      mode = data.mode === 'pod' ? 'pod' : 'picker';
       document.documentElement.toggleAttribute('data-od-comment-mode', commentEnabled);
+      document.documentElement.setAttribute('data-od-comment-mode-kind', mode);
       if (active()) setTimeout(postTargets, 0);
       else hoveredId = null;
+      if (!commentEnabled || mode !== 'pod') {
+        drawing = false;
+        stroke = [];
+        try { window.parent.postMessage({ type: 'od:pod-clear' }, '*'); } catch (_) {}
+      }
       return;
     }
     if (data.type === 'od:inspect-mode') {
@@ -461,8 +546,9 @@ function injectSelectionBridge(
       return;
     }
   });
+  function pickerActive(){ return inspectEnabled || (commentEnabled && mode === 'picker'); }
   document.addEventListener('mouseover', function(ev){
-    if (!active()) return;
+    if (!pickerActive()) return;
     var el = closestTarget(ev);
     if (!el) return;
     var payload = targetFrom(el);
@@ -471,7 +557,7 @@ function injectSelectionBridge(
     window.parent.postMessage(Object.assign({}, payload, { type: 'od:comment-hover' }), '*');
   }, true);
   document.addEventListener('mouseout', function(ev){
-    if (!active()) return;
+    if (!pickerActive()) return;
     var el = closestTarget(ev);
     if (!el) return;
     var next = ev.relatedTarget;
@@ -483,7 +569,7 @@ function injectSelectionBridge(
     window.parent.postMessage({ type: 'od:comment-leave' }, '*');
   }, true);
   document.addEventListener('click', function(ev){
-    if (!active()) return;
+    if (!pickerActive()) return;
     var el = closestTarget(ev);
     if (!el) return;
     ev.preventDefault();
@@ -491,12 +577,45 @@ function injectSelectionBridge(
     var payload = targetFrom(el);
     if (payload) window.parent.postMessage(payload, '*');
   }, true);
+  // Pod drawing — only active in comment mode with the 'pod' tool.
+  document.addEventListener('pointerdown', function(ev){
+    if (!commentEnabled || mode !== 'pod' || ev.button !== 0) return;
+    drawing = true;
+    stroke = [relativePoint(ev)];
+    ev.preventDefault();
+    ev.stopPropagation();
+    postStroke('od:pod-stroke');
+  }, true);
+  document.addEventListener('pointermove', function(ev){
+    if (!drawing || mode !== 'pod') return;
+    var point = relativePoint(ev);
+    var last = stroke[stroke.length - 1];
+    if (last && Math.hypot(last.x - point.x, last.y - point.y) < 4) return;
+    stroke.push(point);
+    ev.preventDefault();
+    ev.stopPropagation();
+    postStroke('od:pod-stroke');
+  }, true);
+  function finishStroke(ev){
+    if (!drawing || mode !== 'pod') return;
+    drawing = false;
+    if (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+    postStroke('od:pod-select');
+  }
+  document.addEventListener('pointerup', finishStroke, true);
+  document.addEventListener('pointercancel', finishStroke, true);
   window.addEventListener('resize', schedulePostTargets);
   document.addEventListener('scroll', schedulePostTargets, true);
+  var mo = new MutationObserver(schedulePostTargets);
+  mo.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
   // Reflect the host-requested initial modes on the documentElement so
   // the cursor/hover styles match what the bridge picks up on click.
   if (commentEnabled) document.documentElement.toggleAttribute('data-od-comment-mode', true);
   if (inspectEnabled) document.documentElement.toggleAttribute('data-od-inspect-mode', true);
+  document.documentElement.setAttribute('data-od-comment-mode-kind', mode);
   hydrateOverridesFromDom();
   // Acknowledge the hydrated overrides to the host as a preview signal so
   // diagnostic listeners (and tests) can observe that the bridge is in sync
@@ -508,10 +627,9 @@ function injectSelectionBridge(
   else setTimeout(postTargets, 0);
 })();</script>`;
   const style = `<style data-od-selection-bridge-style>
-html[data-od-comment-mode] [data-od-id],
-html[data-od-comment-mode] [data-screen-label],
-html[data-od-inspect-mode] [data-od-id],
-html[data-od-inspect-mode] [data-screen-label] { cursor: crosshair !important; }
+html[data-od-comment-mode] body * { cursor: crosshair !important; }
+html[data-od-inspect-mode] body * { cursor: crosshair !important; }
+html[data-od-comment-mode][data-od-comment-mode-kind="pod"] body * { cursor: cell !important; }
 </style>`;
   const withStyle = /<\/head>/i.test(doc)
     ? doc.replace(/<\/head>/i, style + '</head>')
@@ -558,7 +676,7 @@ function injectDeckBridge(doc: string, initialSlideIndex = 0): string {
     ? doc.replace(/<head[^>]*>/i, (m) => m + styleFix)
     : styleFix + doc;
   doc = docWithStyle;
-  const script = `<script>(function(){
+  const script = `<script data-od-deck-bridge>(function(){
   var initialSlideIndex = ${safeInitialSlideIndex};
   var didRestoreInitialSlide = initialSlideIndex <= 0;
   function slides(){ return document.querySelectorAll('.slide'); }
