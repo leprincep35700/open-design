@@ -198,6 +198,8 @@ export const AGENT_DEFS = [
     fallbackModels: [
       DEFAULT_MODEL_OPTION,
       { id: 'gpt-5-codex', label: 'gpt-5-codex' },
+      { id: 'gpt-5.5', label: 'gpt-5.5' },
+      { id: 'gpt-5.4', label: 'gpt-5.4' },
       { id: 'gpt-5', label: 'gpt-5' },
       { id: 'o3', label: 'o3' },
       { id: 'o4-mini', label: 'o4-mini' },

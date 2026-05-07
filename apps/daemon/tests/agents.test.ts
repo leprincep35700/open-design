@@ -138,6 +138,18 @@ test('codex args keep plugins enabled when OD_CODEX_DISABLE_PLUGINS is not 1', (
   assert.equal(args.includes('plugins'), false);
 });
 
+test('codex model picker includes explicit newer OpenAI choices', () => {
+  assert.deepEqual(codex.fallbackModels.map((m) => m.id), [
+    'default',
+    'gpt-5-codex',
+    'gpt-5.5',
+    'gpt-5.4',
+    'gpt-5',
+    'o3',
+    'o4-mini',
+  ]);
+});
+
 // Recent Codex CLI versions reject a bare `-` argv sentinel; passing it
 // alongside the stdin pipe causes `error: unexpected argument '-' found`
 // and exit code 2 before any prompt is read. We deliver the prompt via
