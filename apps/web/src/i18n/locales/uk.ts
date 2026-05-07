@@ -151,8 +151,6 @@ export const uk: Dict = {
   'promptTemplates.emptyImage': 'Шаблонів підказок для зображень ще не встановлено.',
   'promptTemplates.emptyVideo': 'Шаблонів підказок для відео ще не встановлено.',
   'promptTemplates.emptyNoMatch': 'Немає шаблонів, що відповідають вашому пошуку.',
-  'promptTemplates.allSources': 'Усі джерела',
-  'promptTemplates.sourceFilterAria': 'Фільтрувати за джерелом',
   'promptTemplates.attributionFooter': 'Адаптовано з публічних бібліотек підказок. Кожна картка посилається на автора.',
   'promptTemplates.openPreviewTitle': 'Відкрити підказку та попередній перегляд',
   'promptTemplates.sourcePrefix': 'Джерело:',
