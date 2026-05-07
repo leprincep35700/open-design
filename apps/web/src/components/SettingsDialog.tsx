@@ -1390,6 +1390,18 @@ export async function persistConfigAndRunOrbit(
   return await response.json() as OrbitRunStartResponse;
 }
 
+export function configForManualOrbitRun(config: AppConfig): AppConfig {
+  const effectiveTemplateSkillId = config.orbit?.templateSkillId || DEFAULT_ORBIT.templateSkillId || '';
+  if (!effectiveTemplateSkillId) return config;
+  return {
+    ...config,
+    orbit: {
+      ...(config.orbit ?? DEFAULT_ORBIT),
+      templateSkillId: effectiveTemplateSkillId,
+    },
+  };
+}
+
 interface OrbitStatusResponse {
   running?: boolean;
   nextRunAt?: string | null;
@@ -1497,9 +1509,8 @@ function OrbitSection({
   // saved value to the built-in default (DEFAULT_ORBIT.templateSkillId,
   // currently 'orbit-general'). The select no longer offers a "no template"
   // option, so legacy configs that stored null are presented as if they
-  // were on the default. We keep `cfg.orbit.templateSkillId` untouched on
-  // disk until the user actively changes the selection — `updateOrbit`
-  // handles persisting the chosen id at that point.
+  // were on the default. Manual runs persist this effective value before
+  // launching so the daemon uses the same template the UI displays.
   const effectiveTemplateSkillId = orbit.templateSkillId || DEFAULT_ORBIT.templateSkillId || '';
 
   const selectedTemplate = useMemo(() => {
@@ -1514,7 +1525,7 @@ function OrbitSection({
 
     void (async () => {
       try {
-        const payload = await persistConfigAndRunOrbit(cfg);
+        const payload = await persistConfigAndRunOrbit(configForManualOrbitRun(cfg));
         if (!payload.projectId) throw new Error('Orbit run did not return a project');
 
         onLeaveForOrbitProject();
