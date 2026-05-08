@@ -33,6 +33,7 @@ function skill(overrides: Partial<SkillSummary> & Pick<SkillSummary, 'id' | 'nam
     designSystemRequired: false,
     defaultFor: [],
     upstream: null,
+    aggregatesExamples: false,
     hasBody: true,
     examplePrompt: `Build ${name}`,
     ...rest,
