@@ -64,10 +64,17 @@ describe('ExamplesTab filter counts', () => {
     const scenarioFilters = screen.getByRole('tablist', { name: 'Scenario' });
     expect(within(scenarioFilters).getByRole('button', { name: /^All\s*4$/ })).toBeTruthy();
 
-    fireEvent.click(within(scenarioFilters).getByRole('button', { name: /^Product\s*2$/ }));
+    const typeFilters = screen.getByRole('tablist', { name: 'Type' });
+    fireEvent.click(within(typeFilters).getByRole('tab', { name: /^Prototypes · Desktop\s*2$/ }));
 
-    expect(within(scenarioFilters).getByRole('button', { name: /^All\s*4$/ })).toBeTruthy();
-    expect(within(scenarioFilters).getByRole('button', { name: /^Product\s*2$/ })).toBeTruthy();
+    expect(within(scenarioFilters).getByRole('button', { name: /^All\s*2$/ })).toBeTruthy();
+    expect(within(scenarioFilters).getByRole('button', { name: /^Engineering\s*1$/ })).toBeTruthy();
+    expect(within(scenarioFilters).getByRole('button', { name: /^Product\s*1$/ })).toBeTruthy();
+
+    fireEvent.click(within(scenarioFilters).getByRole('button', { name: /^Product\s*1$/ }));
+
+    expect(within(scenarioFilters).getByRole('button', { name: /^All\s*2$/ })).toBeTruthy();
+    expect(within(scenarioFilters).getByRole('button', { name: /^Product\s*1$/ })).toBeTruthy();
   });
 
   it('uses media tags for media examples so visible tags do not imply zero-count prototype types', () => {
