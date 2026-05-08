@@ -13,6 +13,10 @@ function renderOptions(models: AgentModelOption[]): string {
 }
 
 describe('renderModelOptions', () => {
+  it('renders an empty model list without options', () => {
+    expect(renderOptions([])).toBe('<select></select>');
+  });
+
   it('renders flat model lists as ungrouped options in input order', () => {
     expect(
       renderOptions([
@@ -29,9 +33,9 @@ describe('renderModelOptions', () => {
     expect(
       renderOptions([
         { id: 'openai/gpt-5.1', label: 'openai/gpt-5.1' },
+        { id: 'custom-local', label: 'Custom local' },
         { id: 'default', label: 'Default' },
         { id: 'anthropic/claude-sonnet-4.5', label: 'anthropic/claude-sonnet-4.5' },
-        { id: 'custom-local', label: 'Custom local' },
         { id: 'openai/o3', label: 'openai/o3' },
       ]),
     ).toBe(
@@ -61,6 +65,7 @@ describe('isCustomModel', () => {
   it('returns false for empty selections and listed model ids', () => {
     expect(isCustomModel(null, models)).toBe(false);
     expect(isCustomModel(undefined, models)).toBe(false);
+    expect(isCustomModel('', models)).toBe(false);
     expect(isCustomModel('default', models)).toBe(false);
     expect(isCustomModel('openai/gpt-5.1', models)).toBe(false);
   });
