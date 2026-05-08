@@ -222,7 +222,7 @@ test('codex model picker includes current OpenAI choices in priority order', asy
   }
 });
 
-test('codex picker includes models with special reasoning clamps', () => {
+test('codex picker includes gpt-5.1 model family', () => {
   const pickerModels = new Set(codex.fallbackModels.map((model) => model.id));
 
   assert.equal(pickerModels.has('gpt-5.1'), true);
