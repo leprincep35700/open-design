@@ -51,3 +51,10 @@ tsconfig.tsbuildinfo
 task.md
 specs/change/active
 .ralph/
+# Track shared Claude Code agents/commands while keeping local Claude state ignored.
+!.claude/
+.claude/*
+!.claude/agents/
+!.claude/agents/**
+!.claude/commands/
+!.claude/commands/**

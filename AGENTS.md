@@ -152,3 +152,39 @@ Default precedence is OD_MEDIA_CONFIG_DIR > OD_DATA_DIR > `<projectRoot>/.od`.
 ## When is `pnpm install` required?
 
 Run `pnpm install` after changing package manifests, workspace layout, command entrypoints, bin/link-related content, or after adding/removing workspace packages.
+
+---
+
+## Agents experts disponibles
+
+- `@feature-planner` → feature/refacto non triviale, cadrage, feature brief, découpage et preuves attendues
+- `@debugger` → bug, régression, comportement incohérent, cause racine à isoler
+- `@test-engineer` → manque de couverture unit / integration, dette de preuve, non-régression
+- `@playwright-e2e` → parcours critique visible, golden path, test flaky, setup e2e
+- `@frontend-designer` → nouvel écran, composant, responsive, accessibilité minimale, conformité `DESIGN.md`
+- `@devops-ci` → Docker, CI, scripts, env, build, déploiement, diagnostic runner/config
+- `@code-reviewer` → revue avant merge ou avant livraison importante
+- `@product-guardian` → contrôle de conformité à `spec.md`, `architecture.md`, `roadmap.md`, `DESIGN.md` (si présent)
+- `@security-review` → auth, cookies, secrets, uploads, webhooks, permissions, providers IA et exposition de données
+- `@docs-maintainer` → synchronisation `README.md`, `spec.md`, `architecture.md`, `roadmap.md`, `.env.example`, `DEPLOY.md`
+
+Commandes utiles : `/plan-feature`, `/review-ready`, `/ship-check`.
+---
+
+## Choisir le bon mécanisme Claude Code
+
+- **Agent** : tâche autonome, multi-étapes, avec contexte isolé et expertise claire.
+- **Commande** : workflow déclenché explicitement par l'humain (`/plan-feature`, `/review-ready`, `/ship-check`).
+- **Règle / doc** : convention stable que tous les agents doivent respecter.
+- Ne pas créer un agent pour une simple checklist ou une règle courte.
+- Ne pas appeler un agent expert comme décoration : lui donner objectif, fichiers, contraintes et preuve attendue.
+
+---
+
+## Gestion du contexte
+
+- Ne pas charger tout le repo par défaut.
+- Lire uniquement les fichiers nécessaires à la tâche.
+- Pour une grosse tâche, découper en sous-tâches vérifiables.
+- Pour une exploration sans modification, préférer `@feature-planner`, `@product-guardian` ou un agent read-only.
+- Si le contexte devient confus ou contradictoire, résumer l'état réel, recharger les fichiers sources et reprendre depuis les preuves.
